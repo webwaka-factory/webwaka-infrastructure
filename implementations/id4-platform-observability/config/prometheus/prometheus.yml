@@ -1,0 +1,119 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'webwaka'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+# Load rules once and periodically evaluate them
+rule_files:
+  - 'alerts.yml'
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'prometheus'
+          tier: 'observability'
+
+  # Node Exporter - Infrastructure metrics
+  - job_name: 'node-exporter'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          service: 'node-exporter'
+          tier: 'infrastructure'
+
+  # WebWaka Platform Services
+  # These will be dynamically discovered in production via Kubernetes service discovery
+  
+  # Core Services
+  - job_name: 'core-services'
+    scrape_interval: 15s
+    static_configs:
+      - targets: []  # Populated by service discovery
+        labels:
+          tier: 'core-services'
+    relabel_configs:
+      # Enforce tenant isolation via tenant_id label
+      - source_labels: [__address__]
+        target_label: __param_tenant_id
+      # Limit cardinality to prevent cost explosions
+      - source_labels: [__name__]
+        regex: '.*_bucket'
+        action: drop
+
+  # Capabilities
+  - job_name: 'capabilities'
+    scrape_interval: 15s
+    static_configs:
+      - targets: []  # Populated by service discovery
+        labels:
+          tier: 'capabilities'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_tenant_id
+
+  # Suites
+  - job_name: 'suites'
+    scrape_interval: 15s
+    static_configs:
+      - targets: []  # Populated by service discovery
+        labels:
+          tier: 'suites'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_tenant_id
+
+  # Loki - Log aggregation metrics
+  - job_name: 'loki'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['loki:3100']
+        labels:
+          service: 'loki'
+          tier: 'observability'
+
+  # Jaeger - Tracing metrics
+  - job_name: 'jaeger'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['jaeger:14269']
+        labels:
+          service: 'jaeger'
+          tier: 'observability'
+
+  # Alertmanager - Alert metrics
+  - job_name: 'alertmanager'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['alertmanager:9093']
+        labels:
+          service: 'alertmanager'
+          tier: 'observability'
+
+# Remote write configuration (for multi-region or partner telemetry aggregation)
+# remote_write:
+#   - url: https://telemetry.webwaka.com/v1/write
+#     queue_config:
+#       capacity: 10000
+#       max_shards: 5
+#       min_shards: 1
+#       max_samples_per_send: 1000
+#       batch_send_deadline: 10s
+#     write_relabel_configs:
+#       # Only send aggregate metrics, not raw data
+#       - source_labels: [__name__]
+#         regex: '.*_total|.*_count|.*_sum'
+#         action: keep

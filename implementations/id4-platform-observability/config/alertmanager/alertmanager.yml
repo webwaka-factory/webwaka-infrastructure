@@ -1,0 +1,154 @@
+global:
+  resolve_timeout: 5m
+  # SMTP configuration for email alerts
+  smtp_smarthost: 'smtp.example.com:587'
+  smtp_from: 'alerts@webwaka.com'
+  smtp_auth_username: 'alerts@webwaka.com'
+  smtp_auth_password: 'CHANGE_ME'
+  smtp_require_tls: true
+
+# Templates for alert notifications
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Route tree for alert routing
+route:
+  # Default receiver for all alerts
+  receiver: 'default'
+  
+  # Group alerts by these labels
+  group_by: ['alertname', 'cluster', 'service']
+  
+  # Wait time before sending initial notification
+  group_wait: 30s
+  
+  # Wait time before sending notification about new alerts in the same group
+  group_interval: 5m
+  
+  # Wait time before re-sending a notification
+  repeat_interval: 4h
+  
+  # Child routes for specific alert types
+  routes:
+    # Critical alerts (immediate notification)
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 10s
+      repeat_interval: 1h
+      continue: true
+    
+    # Warning alerts (less urgent)
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_wait: 1m
+      repeat_interval: 12h
+    
+    # Observability stack alerts (separate channel)
+    - match:
+        category: observability
+      receiver: 'observability-alerts'
+      group_wait: 1m
+      repeat_interval: 6h
+    
+    # Database alerts (DBA team)
+    - match:
+        category: database
+      receiver: 'database-alerts'
+      group_wait: 30s
+      repeat_interval: 2h
+
+# Inhibition rules (suppress alerts based on other active alerts)
+inhibit_rules:
+  # Suppress warning alerts if critical alert is firing for the same service
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['service', 'tenant_id']
+  
+  # Suppress service alerts if the service is down
+  - source_match:
+      alertname: 'ServiceDown'
+    target_match_re:
+      alertname: '(HighErrorRate|HighResponseTime|.*)'
+    equal: ['service']
+
+# Receivers (notification channels)
+receivers:
+  # Default receiver (email)
+  - name: 'default'
+    email_configs:
+      - to: 'ops@webwaka.com'
+        send_resolved: true
+        headers:
+          Subject: '[WebWaka Alert] {{ .GroupLabels.alertname }}'
+  
+  # Critical alerts (email + Slack + PagerDuty)
+  - name: 'critical-alerts'
+    email_configs:
+      - to: 'ops@webwaka.com'
+        send_resolved: true
+        headers:
+          Subject: '[CRITICAL] {{ .GroupLabels.alertname }}'
+    
+    # Slack webhook (uncomment and configure)
+    # slack_configs:
+    #   - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+    #     channel: '#alerts-critical'
+    #     title: '[CRITICAL] {{ .GroupLabels.alertname }}'
+    #     text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+    #     send_resolved: true
+    
+    # PagerDuty integration (uncomment and configure)
+    # pagerduty_configs:
+    #   - service_key: 'YOUR_PAGERDUTY_SERVICE_KEY'
+    #     description: '{{ .GroupLabels.alertname }}'
+    #     details:
+    #       firing: '{{ .Alerts.Firing | len }}'
+    #       resolved: '{{ .Alerts.Resolved | len }}'
+  
+  # Warning alerts (email + Slack)
+  - name: 'warning-alerts'
+    email_configs:
+      - to: 'ops@webwaka.com'
+        send_resolved: true
+        headers:
+          Subject: '[WARNING] {{ .GroupLabels.alertname }}'
+    
+    # Slack webhook (uncomment and configure)
+    # slack_configs:
+    #   - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+    #     channel: '#alerts-warning'
+    #     title: '[WARNING] {{ .GroupLabels.alertname }}'
+    #     text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+    #     send_resolved: true
+  
+  # Observability stack alerts
+  - name: 'observability-alerts'
+    email_configs:
+      - to: 'platform-team@webwaka.com'
+        send_resolved: true
+        headers:
+          Subject: '[Observability] {{ .GroupLabels.alertname }}'
+  
+  # Database alerts
+  - name: 'database-alerts'
+    email_configs:
+      - to: 'dba@webwaka.com'
+        send_resolved: true
+        headers:
+          Subject: '[Database] {{ .GroupLabels.alertname }}'
+
+# Deployment mode specific configurations
+# These can be overridden in partner-deployed and self-hosted modes
+
+# SaaS Mode: All alerts go to WebWaka ops team
+# (Default configuration above)
+
+# Partner-Deployed Mode: Alerts go to partner ops team
+# Partners should update receiver configurations with their own channels
+
+# Self-Hosted Mode: Alerts go to client ops team
+# Clients should update receiver configurations with their own channels

@@ -1,0 +1,215 @@
+groups:
+  - name: webwaka_platform_alerts
+    interval: 30s
+    rules:
+      # Service Health Alerts
+      - alert: ServiceDown
+        expr: up{job!~"prometheus|node-exporter|loki|jaeger|alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: availability
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "Service {{ $labels.job }} on {{ $labels.instance }} has been down for more than 2 minutes."
+          runbook: "https://docs.webwaka.com/runbooks/service-down"
+
+      # Error Rate Alerts
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m])) by (service, tenant_id)
+            /
+            sum(rate(http_requests_total[5m])) by (service, tenant_id)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          category: errors
+        annotations:
+          summary: "High error rate on {{ $labels.service }}"
+          description: "Service {{ $labels.service }} for tenant {{ $labels.tenant_id }} has error rate above 5% (current: {{ $value | humanizePercentage }})"
+          runbook: "https://docs.webwaka.com/runbooks/high-error-rate"
+
+      - alert: ElevatedErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m])) by (service, tenant_id)
+            /
+            sum(rate(http_requests_total[5m])) by (service, tenant_id)
+          ) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+          category: errors
+        annotations:
+          summary: "Elevated error rate on {{ $labels.service }}"
+          description: "Service {{ $labels.service }} for tenant {{ $labels.tenant_id }} has error rate above 1% (current: {{ $value | humanizePercentage }})"
+          runbook: "https://docs.webwaka.com/runbooks/elevated-error-rate"
+
+      # Response Time Alerts
+      - alert: HighResponseTime
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (service, le)
+          ) > 2
+        for: 5m
+        labels:
+          severity: critical
+          category: performance
+        annotations:
+          summary: "High response time on {{ $labels.service }}"
+          description: "Service {{ $labels.service }} has p95 response time above 2 seconds (current: {{ $value }}s)"
+          runbook: "https://docs.webwaka.com/runbooks/high-response-time"
+
+      - alert: ElevatedResponseTime
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (service, le)
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "Elevated response time on {{ $labels.service }}"
+          description: "Service {{ $labels.service }} has p95 response time above 1 second (current: {{ $value }}s)"
+          runbook: "https://docs.webwaka.com/runbooks/elevated-response-time"
+
+      # Resource Utilization Alerts
+      - alert: HighCPUUsage
+        expr: |
+          100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 90
+        for: 10m
+        labels:
+          severity: critical
+          category: resources
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage on {{ $labels.instance }} is above 90% (current: {{ $value | humanize }}%)"
+          runbook: "https://docs.webwaka.com/runbooks/high-cpu-usage"
+
+      - alert: HighMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 10m
+        labels:
+          severity: critical
+          category: resources
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage on {{ $labels.instance }} is above 90% (current: {{ $value | humanize }}%)"
+          runbook: "https://docs.webwaka.com/runbooks/high-memory-usage"
+
+      - alert: HighDiskUsage
+        expr: |
+          (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.*"} / node_filesystem_size_bytes{fstype!~"tmpfs|fuse.*"})) * 100 > 90
+        for: 10m
+        labels:
+          severity: critical
+          category: resources
+        annotations:
+          summary: "High disk usage on {{ $labels.instance }}"
+          description: "Disk usage on {{ $labels.instance }} {{ $labels.mountpoint }} is above 90% (current: {{ $value | humanize }}%)"
+          runbook: "https://docs.webwaka.com/runbooks/high-disk-usage"
+
+      - alert: ElevatedDiskUsage
+        expr: |
+          (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.*"} / node_filesystem_size_bytes{fstype!~"tmpfs|fuse.*"})) * 100 > 80
+        for: 30m
+        labels:
+          severity: warning
+          category: resources
+        annotations:
+          summary: "Elevated disk usage on {{ $labels.instance }}"
+          description: "Disk usage on {{ $labels.instance }} {{ $labels.mountpoint }} is above 80% (current: {{ $value | humanize }}%)"
+          runbook: "https://docs.webwaka.com/runbooks/elevated-disk-usage"
+
+      # Database Alerts
+      - alert: DatabaseConnectionPoolExhausted
+        expr: |
+          database_connection_pool_active / database_connection_pool_max > 0.9
+        for: 5m
+        labels:
+          severity: critical
+          category: database
+        annotations:
+          summary: "Database connection pool exhausted for {{ $labels.service }}"
+          description: "Service {{ $labels.service }} has used more than 90% of database connection pool"
+          runbook: "https://docs.webwaka.com/runbooks/database-connection-pool-exhausted"
+
+      - alert: SlowDatabaseQueries
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(database_query_duration_seconds_bucket[5m])) by (service, le)
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+          category: database
+        annotations:
+          summary: "Slow database queries on {{ $labels.service }}"
+          description: "Service {{ $labels.service }} has p95 database query time above 1 second (current: {{ $value }}s)"
+          runbook: "https://docs.webwaka.com/runbooks/slow-database-queries"
+
+  - name: observability_stack_alerts
+    interval: 30s
+    rules:
+      # Prometheus Alerts
+      - alert: PrometheusDown
+        expr: up{job="prometheus"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: observability
+        annotations:
+          summary: "Prometheus is down"
+          description: "Prometheus has been down for more than 2 minutes. Observability is degraded."
+          runbook: "https://docs.webwaka.com/runbooks/prometheus-down"
+
+      - alert: PrometheusTSDBCompactionsFailing
+        expr: rate(prometheus_tsdb_compactions_failed_total[5m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+          category: observability
+        annotations:
+          summary: "Prometheus TSDB compactions failing"
+          description: "Prometheus TSDB compactions are failing. Storage may be degraded."
+          runbook: "https://docs.webwaka.com/runbooks/prometheus-compactions-failing"
+
+      # Loki Alerts
+      - alert: LokiDown
+        expr: up{job="loki"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: observability
+        annotations:
+          summary: "Loki is down"
+          description: "Loki has been down for more than 2 minutes. Log aggregation is unavailable."
+          runbook: "https://docs.webwaka.com/runbooks/loki-down"
+
+      # Jaeger Alerts
+      - alert: JaegerDown
+        expr: up{job="jaeger"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          category: observability
+        annotations:
+          summary: "Jaeger is down"
+          description: "Jaeger has been down for more than 2 minutes. Distributed tracing is unavailable."
+          runbook: "https://docs.webwaka.com/runbooks/jaeger-down"
+
+      # Alertmanager Alerts
+      - alert: AlertmanagerDown
+        expr: up{job="alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: observability
+        annotations:
+          summary: "Alertmanager is down"
+          description: "Alertmanager has been down for more than 2 minutes. Alert routing is unavailable."
+          runbook: "https://docs.webwaka.com/runbooks/alertmanager-down"

@@ -1,0 +1,155 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    # Batch configuration for cost optimization
+    batchwait: 10s
+    batchsize: 1048576  # 1MB
+    
+    # Retry configuration
+    backoff_config:
+      min_period: 500ms
+      max_period: 5m
+      max_retries: 10
+    
+    # External labels for multi-tenancy
+    external_labels:
+      cluster: 'webwaka'
+      environment: 'production'
+
+scrape_configs:
+  # Docker container logs
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Extract container name
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      
+      # Extract service name from container labels
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'service'
+      
+      # Extract tenant_id from container labels (for multi-tenancy)
+      - source_labels: ['__meta_docker_container_label_tenant_id']
+        target_label: 'tenant_id'
+      
+      # Set log level label
+      - source_labels: ['__meta_docker_container_label_log_level']
+        target_label: 'level'
+    
+    # Pipeline stages for log parsing and sampling
+    pipeline_stages:
+      # Parse JSON logs
+      - json:
+          expressions:
+            timestamp: timestamp
+            level: level
+            message: message
+            service: service
+            tenant_id: tenant_id
+            trace_id: trace_id
+            span_id: span_id
+      
+      # Extract timestamp
+      - timestamp:
+          source: timestamp
+          format: RFC3339
+      
+      # Set labels from parsed fields
+      - labels:
+          level:
+          service:
+          tenant_id:
+          trace_id:
+      
+      # Sampling based on log level (cost optimization)
+      - match:
+          selector: '{level="DEBUG"}'
+          stages:
+            - sampling:
+                rate: 0.01  # Sample 1% of DEBUG logs
+      
+      - match:
+          selector: '{level="TRACE"}'
+          stages:
+            - sampling:
+                rate: 0.001  # Sample 0.1% of TRACE logs
+      
+      # Drop sensitive information
+      - replace:
+          expression: '(password|token|secret|api_key)=[^\s]+'
+          replace: '$1=***REDACTED***'
+
+  # System logs
+  - job_name: system
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: system
+          __path__: /var/log/*.log
+    
+    pipeline_stages:
+      # Parse syslog format
+      - regex:
+          expression: '^(?P<timestamp>\w+ \d+ \d+:\d+:\d+) (?P<hostname>\S+) (?P<process>\S+): (?P<message>.*)$'
+      
+      - timestamp:
+          source: timestamp
+          format: 'Jan _2 15:04:05'
+      
+      - labels:
+          hostname:
+          process:
+
+  # Application logs (for services not running in Docker)
+  - job_name: application
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: application
+          __path__: /var/log/webwaka/*.log
+    
+    pipeline_stages:
+      # Parse JSON application logs
+      - json:
+          expressions:
+            timestamp: timestamp
+            level: level
+            message: message
+            service: service
+            tenant_id: tenant_id
+            trace_id: trace_id
+      
+      - timestamp:
+          source: timestamp
+          format: RFC3339
+      
+      - labels:
+          level:
+          service:
+          tenant_id:
+          trace_id:
+      
+      # Sampling for DEBUG and TRACE logs
+      - match:
+          selector: '{level="DEBUG"}'
+          stages:
+            - sampling:
+                rate: 0.01
+      
+      - match:
+          selector: '{level="TRACE"}'
+          stages:
+            - sampling:
+                rate: 0.001
